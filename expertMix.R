@@ -3,6 +3,7 @@
 
 #source("/home/rhosur/Projects/src/sparseRegression.R")
 library(snow)
+
 #first read in the data and make it consistent
 
 
@@ -45,9 +46,12 @@ mainFT <- function(rank_slave, args_list1) {
           #return(result_FT)
 
 
-main <- function(rankSlave,arg_list,debug=FALSE) {
+main <- function(rankSlave,arg_list) {
         source("sparseRegression.R")
+        #library(glmnet)
         #log file
+        #last value in the args_list is the debug var
+        debug = arg_list[[length(arg_list)]]
         if (debug) {
            sink(paste("Par_expertMix.log.",rankSlave,sep=""),append=TRUE)
         }
@@ -450,8 +454,9 @@ EM <- function(listOfMu,listOfSig,initClsWts,MAX_ITER,listcovPrior,effSampleSize
                break
             }
             #print(currPostProb)
-            currPostProb <- rowNormalize(currPostProb)            
-            #print(currPostProb)
+            currPostProb <- rowNormalize(currPostProb)
+            currPostProb_str <- paste(unlist(lapply(currPostProb,FUN=function(x){paste(x,collapse=",")})),collapse="\t")
+            print(paste("CURRPOSTPROB:",currPostProb_str))
 
 
 
@@ -481,8 +486,11 @@ EM <- function(listOfMu,listOfSig,initClsWts,MAX_ITER,listcovPrior,effSampleSize
 
                 optParams_SBL = mainSBL(allDta,responses,currPostProb[[clIdx]],currlistOfBeta[[clIdx]],currlistOfRegSig[[clIdx]],currlistOfAlpha[[clIdx]])
                 currlistOfBeta[[clIdx]] = optParams_SBL[[1]]
+                print(paste("CURRLISTOFBETA:",paste(currlistOfBeta[[clIdx]],collapse=",")))
                 currlistOfRegSig[[clIdx]] = optParams_SBL[[2]]
+                print(paste("CURRLISTOFREGSIG:",paste(currlistOfRegSig[[clIdx]],collapse=",")))
                 currlistOfAlpha[[clIdx]] = optParams_SBL[[3]]
+                print(paste("CURRLISTOFALPHA:",paste(currlistOfAlpha[[clIdx]],collapse=",")))
                 currSBL_llk[[clIdx]] = optParams_SBL[[4]]
                 #currlistOfBeta[[clIdx]] = computeNewRegressionCoeffs(t(allDta),responses,currPostProb[[clIdx]])
                 #currlistOfRegSig[[clIdx]]  = computeNewRegressionVariance(t(allDta),responses,currlistOfBeta[[clIdx]],currPostProb[[clIdx]]) 
@@ -563,8 +571,8 @@ EM <- function(listOfMu,listOfSig,initClsWts,MAX_ITER,listcovPrior,effSampleSize
          }
       }  
       #}
-      #return only the log-likelihood of the data and not the penalized likelihood
-      return(sum(currll))
+      
+      return(list("LLK_tot"=sum(currll),"membership"=mmbList,"reg_coeffs"=currlistOfBeta))
 }
 
 
@@ -753,7 +761,7 @@ for (clf in clFiles){
      print("Initializing EM..")
      allDta <- arg_list[[1]]
      clinicVars <- arg_list[[2]]
-     print(allDta[1:5,1:5])
+     print(allDta[1:5,1:2])
      print(clinicVars[1:5,]) 
 
      ######REMOVE THIS######
@@ -771,6 +779,8 @@ for (clf in clFiles){
      #priorCov = solve(priorCov)
      BIC <- list()
      sparsity <- list()
+     membership_all <- list()
+     regression_coeffs <- list()
      BIC[[Kmax+1]] = 0.0
      listofBICs <- c()
      numFeats = length(colnames(allDta))
@@ -823,7 +833,7 @@ for (clf in clFiles){
              print(paste("Size of initial Cluster: ",nrow(dtaF)))
              currmu <- unlist(lapply(dtaF,mean))
              print(paste("Dim of dtaF:",dim(dtaF)))
-             print(dtaF[1:5,1:5])
+             print(dtaF[1:5,1:2])
              print(paste("currmu:",currmu)) 
              currcov <- cov(dtaF)
              listOfMu[[clIdx]] = currmu
@@ -845,45 +855,56 @@ for (clf in clFiles){
              clFeat <- dtaF[which(rownames(dtaF) %in% rownames(clinicVars)),]
              cl_e <- clinicVars[rownames(clFeat),]
              #add intercept, so the number of features in greater by 1
-             print(clFeat[1:5,1:5])
-             clFeat$Intercept = c(rep(1.0,nrow(dtaF)))
+             print(clFeat[1:5,1:2])
+             #clFeat$Intercept = c(rep(1.0,nrow(dtaF)))
              print("Building initial model...")
-             if (nrow(dtaF) > 1*(numFeats+1)){
-                 model <- lm(cl_e~0+.,data=clFeat)
+             if (nrow(dtaF) > 2*(numFeats+1)){
+                 #model <- lm(cl_e~0+.,data=clFeat)
+                 #go for L2 regularized solution 
+                 model <- glmnet(as.matrix(clFeat),cl_e,alpha=0)
+                 # need a penalty -- using an arbitrary one for now
+                 #need to put intercept at the back. 
+                 model$coefficients <- coefficients(model,s=0.01)[2:(numFeats+1),1]
+                 model$coefficients[numFeats+1] = coefficients(model,s=0.01)[1,1]
                  print("Model formula for general..")
                  print(model$call) 
                  listofBeta[[clIdx]] = model$coefficients
                  print("Initial Model:")
                  print(model$coefficients)
-                 listofregsig = c(listofregsig,0.1*var(cl_e))
-                 alpha_cls=c(rep(0.1*max(abs(model$coefficients)),numFeats),1)
+                 listofregsig = c(listofregsig,0.5*var(cl_e))
+                 alpha_cls=c(rep(1000*max(abs(model$coefficients)),numFeats),1)
                  listofAlpha[[clIdx]] = alpha_cls
                  #print(alpha_cls)
 
              } else {
+                    model <- glmnet(as.matrix(clFeat),cl_e,alpha=0)
+                    # need a penalty -- using an arbitrary one for now
+                    #need to put intercept at the back. 
+                    model$coefficients <- coefficients(model,s=0.01)[2:(numFeats+1),1]
+                    model$coefficients[numFeats+1] = coefficients(model,s=0.01)[1,1]
                     #fit only one feature, put all others to zero
-                    model_coeff = c(rep(1e-4,numFeats+1))
+                    #model_coeff = c(rep(1e-4,numFeats+1))
                     #select feature to include randomly
-                    feat_int <- sample(seq(1:numFeats),1)
-                    feat_incl = colnames(clFeat)[feat_int]
+                    #feat_int <- sample(seq(1:numFeats),1)
+                    #feat_incl = colnames(clFeat)[feat_int]
                     #print(feat_incl)
-                    fmla <- as.formula(paste("cl_e~0+",feat_incl,sep="")) 
-                    print("Model formula for fitting only one feature...")
-                    print(fmla)
-                    model <- lm(fmla,data=clFeat) 
-                    model_coeff[feat_int] = model$coefficients
+                    #fmla <- as.formula(paste("cl_e~0+",feat_incl,sep="")) 
+                    #print("Model formula for fitting only one feature...")
+                    #print(fmla)
+                    #model <- lm(fmla,data=clFeat) 
+                    #model_coeff[feat_int] = model$coefficients
                     #print(clFeat)
                     #print(cl_e) 
-                    #model_coeff[numFeats+1] = mean(cl_e$EDSS)
+                    #model_coeff[numFeats+1] = 1.0
                     print("Initial Model:")
-                    print(model_coeff)
-                    listofBeta[[clIdx]] = model_coeff
+                    #print(model$coefficients)
+                    listofBeta[[clIdx]] = model$coefficients
                     if (length(cl_e) > 1) {
-                       listofregsig = c(listofregsig,0.1*var(cl_e))
+                       listofregsig = c(listofregsig,0.5*var(cl_e))
                     } else {
                         listofregsig = c(listofregsig,0.1)
                     }
-                    alpha_cls=c(rep(0.1*max(abs(model_coeff)),numFeats),1)
+                    alpha_cls=c(rep(1000*max(abs(model$coefficients)),numFeats),1)
                     listofAlpha[[clIdx]] = alpha_cls
              } 
 
@@ -899,31 +920,37 @@ for (clf in clFiles){
          listOfPriorCov = listOfSig
          #calculate BIC based on log-likelihood
          
-         loglik = EM(listOfMu,listOfSig,initClsWts,1000,listOfPriorCov,listOfEffSam,clinicVars[,1],listofBeta,listofregsig,listofAlpha,writeFit=T)
+         em_results = EM(listOfMu,listOfSig,initClsWts,1000,listOfPriorCov,listOfEffSam,clinicVars[,1],listofBeta,listofregsig,listofAlpha,writeFit=F)
+         loglik = em_results[["LLK_tot"]]
          #number of params = k*dim_of_mu + k*dim_of_mu^2(Sigma) + (k-1) cluster weghts + (dim_of_mu+1)*k (regression wts, std_dev) + (dim_of_mu+1)*k (alpha)
          penalty =  (k*numFeats+k*(numFeats*numFeats) + k-1 + 2*k*(numFeats+1))*log(numData)
          print(paste("LLK(data)",loglik," Penalty: ",penalty))   
          listofBICs <- c(listofBICs,-2*loglik + penalty)
          sp_beta = unlist(lapply(listofBeta,FUN=function(x){(length(which(x > 0.000005)))/numFeats}))
          sparsity[[k]] = mean(sp_beta)
-         print(sparsity)
+         #print(sparsity)
          #if (rerun == 1){
          BIC[[k]] = -2*loglik + penalty
+         if (is.infinite(BIC[[k]])){
+            BIC[[k]] = NaN
+         }
+         membership_all[[k]] = em_results[["membership"]]
+         regression_coeffs[[k]] = em_results[["reg_coeffs"]]
          #} else {
             #BIC[[k]] = c(BIC[[k]],-2*loglik + penalty) 
          #}
      
     }
-    print(listofBICs)
-    print(BIC[1:Kmax])
+    #print(listofBICs)
+    #print(BIC[1:Kmax])
     #svg("ACP_BICs_ChaussInit.svg")
     #boxplot(BIC[1:Kmax],main="K-means Initialization",xlab="Number of Clusters",ylab="BIC")
     #dev.off()
-    return(list("BIC"=BIC,"sparsity"=sparsity))
+    return(list("BIC"=BIC,"membership"=membership_all,"reg_coeffs"=regression_coeffs))
 }#main
 
     print("Got here:Flag 1")
-    result_FT = tryCatch(main(rank_slave,args_list1,debug=T),error=function(e) print(e$message)) #c(rep(NULL,args_list1[[3]])))
+    result_FT = tryCatch(main(rank_slave,args_list1),error=function(e) print(e$message)) #c(rep(NULL,args_list1[[3]])))
     print("Got here:Flag2")
     return(result_FT)
 
@@ -934,10 +961,10 @@ for (clf in clFiles){
 
 #############################################
 
-parRuns <- function(molDF,clinDF,plotFile="parEM_boxplot",debug=F) {
+parRuns <- function(molDF,clinDF,reruns=5,maxClust=5,plotFile="parEM_boxplot",debug=F) {
 
-           numReruns  = 5
-           Kmax = 5
+           numReruns  = reruns
+           Kmax = maxClust
            dta_args <- list(molDF,clinDF,Kmax,debug)
            numSlaves = 5
            bic_clsw <- list()
@@ -945,25 +972,38 @@ parRuns <- function(molDF,clinDF,plotFile="parEM_boxplot",debug=F) {
                bic_clsw[[i]] = c(rep(NA,numSlaves*numReruns))
            }
            
-           for (rnIdx in 1:numReruns) {
-               jpClusters <- makeCluster(numSlaves,type="MPI")
+           min_bic = 99999999999
+           best_membership = list()
+           best_reg_coeffs = list()
            
-               print(dta_args[[2]]) 
+           for (rnIdx in 1:numReruns) {
+               print("Got here -1")  
+               jpClusters <- makeCluster(numSlaves,type="SOCK")
+           
+               #print(dta_args[[2]]) 
                print("Got here 0")
                parEM_all <- clusterApply(jpClusters,1:numSlaves,mainFT,dta_args) 
-               print(parEM_all)
+               #print(parEM_all)
                ##plotting function
                if (length(parEM_all) > 1) {
                   parEM = lapply(parEM_all,FUN=function(x){if (length(names(x))>1){return(x$BIC)}else{return(NULL)}})
-                  parEM_sparsity = lapply(parEM_all,FUN=function(x){if (length(names(x))>1){return(x$sparsity)}else{return(NULL)}})
-                  print(parEM_sparsity)
+                  parEM_mmb = lapply(parEM_all,FUN=function(x){if (length(names(x))>1){return(x$membership)}else{return(NULL)}})
+                  parEM_reg = lapply(parEM_all,FUN=function(x){if (length(names(x))>1){return(x$reg_coeffs)}else{return(NULL)}})
+                  #print(parEM_sparsity)
                   print(parEM)
                
                   for (j in 1:numSlaves){
                       if (length(parEM[[j]]) > 0) {
                         for (i in 1:Kmax) {
                            if (!is.nan(parEM[[j]][[i]])) {
-                              bic_clsw[[i]][numSlaves*(rnIdx-1)+j] = parEM[[j]][[i]]
+                              if (!is.na(parEM[[j]][[i]])) {
+                                 bic_clsw[[i]][numSlaves*(rnIdx-1)+j] = parEM[[j]][[i]]
+                                 if (parEM[[j]][[i]] < min_bic){
+                                    min_bic = parEM[[j]][[i]]
+                                    best_reg_coeffs = parEM_reg[[j]][[i]]
+                                    best_membership = parEM_mmb[[j]][[i]]
+                                 }
+                              }   
                            }   
                         }
                       }
@@ -976,7 +1016,13 @@ parRuns <- function(molDF,clinDF,plotFile="parEM_boxplot",debug=F) {
            #print(bic_clsw)
            #remove NaNs
            bic_clsw_clean = lapply(bic_clsw,FUN=function(x){x[!is.na(x)]})
-           print(bic_clsw_clean)
+           #print("BIC:")
+           #print(bic_clsw_clean)
+           print(paste("minBIC:",min_bic))
+           print("Membership:")
+           print(na.omit(best_membership))
+           print("RegCoeffs:")
+           print(best_reg_coeffs)
            pdf(paste(plotFile,".pdf",sep=""))
            boxplot(bic_clsw_clean)
            #stopCluster(jpClusters) 

@@ -18,7 +18,7 @@
 #               regSig^2 = (||Y-XW||^2 + regSig_prev^2 \sum gamma_d) / N
    
 
-
+library(glmnet)
 
 computeNewSigma_w <- function(dtaPts,regSig,weightPrior) {
                   #we will assume an equal prior variance for all the regression weights
@@ -111,8 +111,8 @@ sparseBayesianRegression <- function(dta,respVec,initW,initAlpha,initRegSig,MAX_
                                     currAlpha = newAlpha
                                     newllk = LogLikelihood_type2(dta,respVec,currRegSig,currSigma,currMu,currAlpha)
                                     #check for convergence
-                                    if ((newllk-currllk) < 0.000001) { 
-                                       print("SBL EM has converged!")
+                                    if ((newllk-currllk) < 0.00000001) { 
+                                       print(paste("SBL EM has converged -- num_iter:",iter))
                                        hasConverged = TRUE
                                        #print(paste("SBL Converged Iter: ",iter," regSig: ", currRegSig, "prevLLK: ",currllk," newLLK: ",newllk))
                                        #print("SBLCurrAlpha:")

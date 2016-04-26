@@ -1,9 +1,9 @@
 import os,sys,numpy, random
 
 
-numClusters = 2
-numDims = 10
-numPts =  30
+numClusters = 3
+numDims = 3
+numPts =  10
 
 
 def getSigma(d,delta):
@@ -61,9 +61,9 @@ if __name__ == "__main__":
        currS = getSigma(numDims,k+1)
        currS= old_sig
        #currS = numpy.identity(numDims)
-       currMu = getMu(numDims,k*0.001)
-       currMu = old_mu
-       currBeta = getBeta(numDims,10.0000,k)
+       currMu = getMu(numDims,k*0.01)
+       #currMu = old_mu
+       currBeta = getBeta(numDims,5.0000,k)
        print "Cluster: ",k
        print currMu
        print currBeta
